@@ -5,6 +5,10 @@ local print = PEPrint or print
 --- Game Flavor
 ProEnchantersWoWFlavor = "Cata"
 
+-- Outgoing messages go through PESendChatMessage (MessageVariables.lua), which
+-- expands LOCATION, MAPPIN and PROFLINK; plain SendChatMessage without it.
+local SendChatMessage = PESendChatMessage or SendChatMessage
+
 function PEfilterCheck(msg, author2) -- Need to sort this
 
     local author = string.gsub(author2, "%-.*", "")
