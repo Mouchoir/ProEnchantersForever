@@ -4050,6 +4050,81 @@ end
 	return WorkOrderEnchantsFrame
 end
 
+-- Recipe sync for clients running the mainline UI engine (WoW Forever).
+-- The Classic sync in the options frame reads the old craft window API
+-- (CraftFrame, GetNumCrafts, GetCraftInfo), which does not exist there:
+-- Enchanting opens in the modern Professions window instead. These helpers read
+-- C_TradeSkillUI and match learned recipes to enchants by spell ID (a recipe ID
+-- is the recipe's spell ID), so the result does not depend on localized names.
+local ENCHANTING_SKILL_LINE_ID = 333
+
+-- Whether C_TradeSkillUI currently holds the player's own Enchanting recipes.
+-- It deliberately does not require ProfessionsFrame to be shown: a first version
+-- did, and the sync still reported the window as closed on WoW Forever with it
+-- open. The profession data itself is the reliable signal. Returns false plus a
+-- short reason for the chat message; the reason is nil on clients without
+-- C_TradeSkillUI, so Classic keeps its original message.
+local function GetEnchantingProfessionState()
+	if not (C_TradeSkillUI and C_TradeSkillUI.GetBaseProfessionInfo and C_TradeSkillUI.GetAllRecipeIDs) then
+		return false, nil
+	end
+	if (C_TradeSkillUI.IsTradeSkillLinked and C_TradeSkillUI.IsTradeSkillLinked())
+		or (C_TradeSkillUI.IsTradeSkillGuild and C_TradeSkillUI.IsTradeSkillGuild()) then
+		return false, "another player's profession is open"
+	end
+	local professionInfo = C_TradeSkillUI.GetBaseProfessionInfo()
+	if not professionInfo or professionInfo.professionID ~= ENCHANTING_SKILL_LINE_ID then
+		return false, "open profession: " .. tostring(professionInfo and professionInfo.professionName)
+	end
+	local recipeIds = C_TradeSkillUI.GetAllRecipeIDs()
+	if not recipeIds or #recipeIds == 0 then
+		return false, "the recipe list is not loaded yet"
+	end
+	return true, nil
+end
+
+-- Same result as the Classic sync: only the enchants the player has learned stay
+-- visible, and ProEnchantersCharOptions.filters is rebuilt to match.
+local function SyncLearnedEnchantsFromProfessions()
+	local learnedSpellIds = {}
+	for _, recipeId in ipairs(C_TradeSkillUI.GetAllRecipeIDs()) do
+		local recipeInfo = C_TradeSkillUI.GetRecipeInfo(recipeId)
+		if recipeInfo and recipeInfo.learned then
+			learnedSpellIds[recipeId] = true
+		end
+	end
+
+	for key in pairs(ProEnchantersCharOptions.filters) do
+		ProEnchantersCharOptions.filters[key] = nil
+	end
+
+	local learnedCount = 0
+	for enchKey, _ in pairs(EnchantsName) do
+		local isLearned = learnedSpellIds[CombinedEnchants[enchKey].spell_id] == true
+		ProEnchantersCharOptions.filters[enchKey] = isLearned
+		local enchantButton = enchantButtons[enchKey]
+		if enchantButton then
+			if isLearned then
+				enchantButton.button:Show()
+				enchantButton.background:Show()
+				enchantButton.inficon:Show()
+				enchantButton.infbtn:Show()
+			else
+				enchantButton.button:Hide()
+				enchantButton.background:Hide()
+				enchantButton.favicon:Hide()
+				enchantButton.inficon:Hide()
+				enchantButton.infbtn:Hide()
+			end
+		end
+		if isLearned then
+			learnedCount = learnedCount + 1
+		end
+	end
+	FilterEnchantButtons()
+	print("Sync Completed (" .. learnedCount .. " enchants learned)")
+end
+
 function ProEnchantersCreateOptionsFrame()
 	local OptionsFrame = CreateFrame("Frame", "ProEnchantersOptionsFrame", UIParent, "BackdropTemplate")
 	OptionsFrame:SetFrameStrata("FULLSCREEN")
@@ -5134,7 +5209,14 @@ function ProEnchantersCreateOptionsFrame()
 				print(RED .. "Enchanting Trade Skill Window needs to be open to sync to skill list." .. ColorClose)
 			end
 		else
-			print(RED .. "Enchanting Trade Skill Window needs to be open to sync to skill list." .. ColorClose)
+			-- Mainline engine (WoW Forever): no CraftFrame, read the Professions data
+			local canSync, reason = GetEnchantingProfessionState()
+			if canSync then
+				SyncLearnedEnchantsFromProfessions()
+			else
+				print(RED .. "Enchanting Trade Skill Window needs to be open to sync to skill list." ..
+					(reason and (" (" .. reason .. ")") or "") .. ColorClose)
+			end
 		end
 		UpdateCheckboxesBasedOnFilters()
 	end)
