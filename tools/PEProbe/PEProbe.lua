@@ -198,6 +198,12 @@ local function CacheReagentItems(recipes)
 	end
 end
 
+-- Recipe count captured per profession this session. TRADE_SKILL_LIST_UPDATE
+-- fires on every craft and list change while the window is open: once a
+-- profession is captured, only reopening its window captures it again, and the
+-- chat line is only printed when the capture is new or its size changed.
+local capturedThisSession = {}
+
 -- Modern profession window (C_TradeSkillUI)
 local function DumpTradeSkillRecipes()
 	if not (C_TradeSkillUI and C_TradeSkillUI.GetAllRecipeIDs) then
@@ -290,7 +296,10 @@ local function DumpTradeSkillRecipes()
 		PEProbeDB.professions[name].canListLink = okCan and canLink or nil
 	end
 	CacheReagentItems(recipes)
-	print("|cff33ff99PEProbe|r: " .. #recipeIds .. " recipes captured for " .. name .. ", /reload to save them")
+	if capturedThisSession[name] ~= #recipeIds then
+		print("|cff33ff99PEProbe|r: " .. #recipeIds .. " recipes captured for " .. name .. ", /reload to save them")
+	end
+	capturedThisSession[name] = #recipeIds
 end
 
 -- Legacy craft window (GetCraftInfo), in case this client still uses it for Enchanting
@@ -365,9 +374,16 @@ local function ProbeWindowlessKnowledge()
 end
 
 local pending = false
-local function ScheduleTradeSkillDump()
+local function ScheduleTradeSkillDump(event)
 	if pending then
 		return
+	end
+	-- List updates of an already captured profession are ignored (see capturedThisSession)
+	if event == "TRADE_SKILL_LIST_UPDATE" and C_TradeSkillUI and C_TradeSkillUI.GetBaseProfessionInfo then
+		local ok, info = pcall(C_TradeSkillUI.GetBaseProfessionInfo)
+		if ok and info and info.professionName and capturedThisSession[info.professionName] then
+			return
+		end
 	end
 	pending = true
 	C_Timer.After(1, function()
@@ -477,6 +493,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
 	elseif CHAT_EVENTS[event] then
 		RecordChatAuthor(event, ...)
 	else
-		ScheduleTradeSkillDump()
+		ScheduleTradeSkillDump(event)
 	end
 end)
